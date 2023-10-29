@@ -1,64 +1,45 @@
-import streamlit as st
-import requests
+import streamlit as st, requests, tensorflow as tf, tensorflow_hub as hub
 from bs4 import BeautifulSoup
-import matplotlib.pyplot as plt
-import tensorflow as tf
-import tensorflow_hub as hub
-from tensorflow.keras.preprocessing import image as tf_image
-import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from io import BytesIO
-from PIL import UnidentifiedImageError
+from tensorflow.keras.preprocessing import image as tf_img
+import numpy as np
 
-# Load the pre-trained MobileNetV2 model + higher level layers
-feature_extractor_url = "https://tfhub.dev/google/tf2-preview/mobilenet_v2/classification/4"
-model = tf.keras.Sequential([
-    hub.KerasLayer(feature_extractor_url, input_shape=(224, 224, 3))
-])
+fe_url = "https://tfhub.dev/google/tf2-preview/mobilenet_v2/classification/4"
+model = tf.keras.Sequential([hub.KerasLayer(fe_url, input_shape=(224, 224, 3))])
+labels = np.array(open(tf.keras.utils.get_file('ImageNetLabels.txt', 'https://storage.googleapis.com/download.tensorflow.org/data/ImageNetLabels.txt')).read().splitlines())
 
-# Load the labels file for ImageNet
-labels_path = tf.keras.utils.get_file(
-    'ImageNetLabels.txt', 'https://storage.googleapis.com/download.tensorflow.org/data/ImageNetLabels.txt'
-)
-imagenet_labels = np.array(open(labels_path).read().splitlines())
-
-def load_image(img):
+def process_image(img):
     img = img.resize((224, 224))
-    img = tf_image.img_to_array(img)
+    img = tf_img.img_to_array(img)
     img = np.expand_dims(img, axis=0)
-    img = img / 255.0  # normalize to [0,1] range
-    return img
+    return img / 255.0
 
 def classify_image(img):
-    img_preprocessed = load_image(img)
-    
-    # Make predictions
-    predictions = model.predict(img_preprocessed)
-    predicted_class = np.argmax(predictions[0], axis=-1)
-    predicted_label = imagenet_labels[predicted_class]
-    confidence = tf.nn.softmax(predictions[0])[predicted_class]
-    
-    st.write(f'Predicted label: {predicted_label} with confidence: {confidence.numpy()*100:.2f}%')
+    img_prep = process_image(img)
+    preds = model.predict(img_prep)
+    pred_class = np.argmax(preds[0], axis=-1)
+    pred_label = labels[pred_class]
+    confidence = tf.nn.softmax(preds[0])[pred_class]
+    st.write(f'Predicted label: {pred_label} with confidence: {confidence.numpy()*100:.2f}%')
 
-def fetch_related_images(query):
+def fetch_and_display_related_images(query):
     url = f"https://www.bing.com/images/search?q={query}"
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'lxml')
-    image_elements = soup.find_all('a', {'class': 'iusc'})
-    image_metas = [eval(img['m']) for img in image_elements if 'm' in img.attrs]
-    images = [img_meta['murl'] for img_meta in image_metas]
-    return images
+    img_elements = soup.find_all('a', {'class': 'iusc'})
+    img_metas = [eval(img['m']) for img in img_elements if 'm' in img.attrs]
+    images = [img_meta['murl'] for img_meta in img_metas]
 
-def display_related_images(images):
     cols = st.columns(3)
-    for i, image_url in enumerate(images[:3]):
+    for i, img_url in enumerate(images[:3]):
         try:
-            response = requests.get(image_url)
+            response = requests.get(img_url)
             img = Image.open(BytesIO(response.content))
-            cols[i].image(img, caption=image_url, width=200)
+            cols[i].image(img, caption=img_url, width=200)
         except UnidentifiedImageError:
-            st.error(f"Could not identify the image at URL: {image_url}")
-            continue  # Skip to the next iteration of the loop
+            st.error(f"Could not identify the image at URL: {img_url}")
+            continue
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>Image Classifier</h1>", unsafe_allow_html=True)
@@ -70,6 +51,6 @@ if uploaded_file is not None:
     st.write("")
     st.write("Classifying...")
     classify_image(img)
-    related_images = fetch_related_images(imagenet_labels[np.argmax(model.predict(load_image(img))[0], axis=-1)])
+    query = labels[np.argmax(model.predict(process_image(img))[0], axis=-1)]
     st.write("Related Images:")
-    display_related_images(related_images)
+    fetch_and_display_related_images(query)
